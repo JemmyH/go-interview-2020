@@ -1,0 +1,6 @@
+-   `Command + d` ——> 垂直分屏
+-   `Command + Shift + d` ——> 水平分屏
+-   `Command + w` ——> 关闭当前窗口
+-   `Command + k` ——> 清空屏幕
+-   `Command + Enter` —> 全屏切换
+-   `Command + Option + 方向键` ——> 切换分屏

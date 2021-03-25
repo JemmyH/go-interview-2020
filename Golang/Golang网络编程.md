@@ -238,7 +238,7 @@ int socket(int family, int type, int protocol);  // 如果创建成功，会返�
 
 
 
-`protocol` 指 **传输层协议**：
+`protocol` 指 **传输层协议**（已经废弃，因为前两个参数就能唯一确定使用什么协议，因此这个参数一般写成 0）：
 
 |   `protocol`   |      说明       |
 | :------------: | :-------------: |
@@ -313,7 +313,7 @@ struct sockaddr_un {
 };
 ```
 
-`addrlen` 是第二个参数地址结构的长度。正如大多数 `socket` 接口一样，内核不关心地址结构，当它复制或传递地址给驱动的时候，它依据这个值来确定需要复制多少数据。这已经成为 `socket` 接口中最常见的参数之一了。
+`addrlen` 是第二个参数地址结构的长度。正如大多数 `socket` 接口一样，内核不关心地址结构，当它复制或传递地址给驱动的时候，它依据这个值来确定需要复制多少数据。这已经成为 `socket` 接口中最常见的参数之一了。换一种方式理解，第二个参数是通用地址格式 `sockaddr * addr`，实际传入的参数可能是IPv4、IPv6 或者本地套接字格式，`bind()` 函数会根据第三个参数 `addrlen` 来判断传入的 `addr` 应该怎么解析。
 
 对于 `bind()` 函数中的 `IP` 和 端口，不管是服务端还是客户端，都可以指定，也都可以不指定，也都可以指定其中一个，只不过会有不同的效果。
 
@@ -322,6 +322,40 @@ struct sockaddr_un {
 对于客户端而言，没有必要去指定端口，内核会选择一个可用的动态端口。如果客户端指定了 `IP` 地址，则相当于为发送出去的 `IP数据报` 分配了源IP地址，但这时这个`IP` 地址必须属于这个主机，不能分配一个不存在的 `IP`。
 
 简而言之，采用 `TCP` 或者 非对等的 `UDP` 通信时，客户端不需要 `bind()` 他自己的 `IP` 和端口号，如果需要的话，内核会确定源 `IP` 地址并选择一个临时端口作为源端口，而服务器必须要 `bind()` 自己本机的 `IP` 和端口号。
+
+我们来看一个初始化 `IPv4 TCP` 套接字的实例：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+int make_socket (uint16_t port)
+{
+  int sock;
+  struct sockaddr_in name;
+  /* 创建字节流类型的 IPV4 socket. */
+  sock = socket (PF_INET, SOCK_STREAM, 0);
+  if (sock < 0)
+    {
+      perror ("socket");
+      exit (EXIT_FAILURE);
+    }
+  /* 绑定到 port 和 ip. */
+  name.sin_family = AF_INET; /* IPV4 */
+  name.sin_port = htons (port);  /* 指定端口 */
+  name.sin_addr.s_addr = htonl (INADDR_ANY); /* 通配地址 */
+  /* 把 IPV4 地址转换成通用地址格式，同时传递长度，并进行 bind 操作 */
+  if (bind (sock, (struct sockaddr *) &name, sizeof (name)) < 0)
+    {
+      perror ("bind");
+      exit (EXIT_FAILURE);
+    }
+  return sock
+}
+```
+
+
 
 #### 2.3 `connect()`
 
@@ -332,6 +366,8 @@ int connect(int sockfd, const struct sockaddr *servaddr, socklen_t addrlen);  //
 ```
 
 参数描述与 `bind()` 函数一样，不过这个时候，套接字地址结构必须含有服务器的 `IP` 地址 和 具体的端口号。
+
+客户在调用函数 `connect()` 前不必非得调用 `bind()` 函数，因为如果需要的话，内核会确定源 IP 地址，并按照一定的算法选择一个临时端口作为源端口。
 
 如果是 `TCP` 套接字，调用 `connect()` 会激发 `TCP` 的 **三次握手** 过程，而且仅在连接成功或者出错时才返回。
 
@@ -349,7 +385,7 @@ int listen(int sockfd, int backlog);  // 0成功 -1出错
 >   当进程在处理一个个连接请求的时候，有可能还存在其他的链接请求，因为 `TCP` 连接有一个三次握手的过程，并非原子性的，所以就有可能存在一种半连接状态。这时就有可能出现尝试连接的用户数太多、服务器无法快速完成连接的情况。为了解决这个问题，内核会在自己的进程空间中维护两个队列，而且这两个队列总长度不能超过限定值 `backlog`：
 >
 >   -   未完成连续队列：在三次握手期间，客户端发送一个 `SYN` 并到达服务器请求建立连接，而服务器正在等待完成该过程；
->   -   已完成连续队列：三次握手完成后 或者 连接超时，该连接就会被从 **未完成连续队列** 转移到 **已完成连续队列** 的末尾，当进程调用 `accept()` 时，会从队列头部返回一个连接出去。如果当前队列为空，那么进程将被置于休眠状态，知道此队列中有数据。
+>   -   已完成连续队列：三次握手完成后 或者 连接超时，该连接就会被从 **未完成连续队列** 转移到 **已完成连续队列** 的末尾，当进程调用 `accept()` 时，会从队列头部返回一个连接出去。如果当前队列为空，那么进程将被置于休眠状态，直到此队列中有数据。
 >
 >   当然，内核空间有限，我们不能随意指定一个 `backlog` 值，一般在 30 以内。
 
@@ -363,9 +399,9 @@ int accept(int sockfd, struct sockaddr *cliaddr, socklen_t *addrlen);  // 成功
 
 `accept()` 主要用在基于连接的套接字类型，比如 `TCP` 或者 `SCTP` 。它从 `listen()` 的 **已完成连续队列** 中取出队首的一个连接，创建一个不同于 `socket()` 创建的(称为 **监听套接字(`listening socket`)**)新的套接字——**已连接套接字(`connected socket`)**，并返回指向该套接字的文件名描述符。
 
->   需要区分这两个套接字。一般情况下，服务器仅仅创建一个监听套接字，它在该服务的生命周期内一直存在；内核为每一个建立连接的客户创建一个新的套接字，当服务完成后，这个新创建的 **已连接套接字** 就会被关闭。
+>   需要区分这两个套接字。一般情况下，服务器仅仅创建一个监听套接字，它在该服务的生命周期内一直存在；内核为每一个建立连接的客户创建一个新的套接字，当服务完成后，这个新创建的 **已连接套接字** 就会被关闭，对应的就是 `TCP连接` 的释放。
 
-`accept()` 成功则返回 **已连接套接字** 的描述符，失败则返回 -1。另外需要注意后两个参数，传输的是指针，这其实也是返回值，因为 `C 语言` 中函数没有多返回值，因此采用这种直接修改指针的方式复制，他们分别代表 客户端进程的协议地址、指向改地址的大小。如果我们对客户端协议不感兴趣，可以将这两个指针都置空。
+`accept()` 成功则返回 **已连接套接字** 的描述符，失败则返回 -1。另外需要注意后两个参数，传输的是指针，这其实也是返回值，因为 `C 语言` 中函数没有多返回值，因此采用这种直接修改指针的方式复制，他们分别代表 客户端进程的协议地址、指向该地址的大小。如果我们对客户端协议不感兴趣，可以将这两个指针都置空。
 
 #### 2.6 `read()` 、 `write()`
 
@@ -502,15 +538,525 @@ int main()
 
 ### 3. 从 `socket` 角度看三次握手四次挥手
 
+先看一张图: ![](https://hiberabyss.github.io/2018/03/14/unix-socket-programming/tcp_open_close.jpg)
 
+TCP 状态转换: ![](https://hiberabyss.github.io/2018/03/14/unix-socket-programming/tcp_status1.jpg)
+
+### 4. 本地套接字
+
+本地套接字是 `IPC(InterProcess Communication，进程间通信)` 的一种方式，常用的方式有管道、共享消息队列，也包括此处说的 `本地套接字`。
+
+本地套接字一般也叫 `Unix域套接字(Unix Domain Socket)`，最新的规范已经改名为 `本地套接字`。它是一种特殊的套接字，与 `TCP/IP` 套接字不同。`TCP/UDP` 即使在本地地址通信，也要走系统网络协议栈，而本地套接字，严格意义上说提供了一种单主机跨进程间调用的手段，主要用于一台主机的进程间通信，不需要网络协议，是基于文件系统的。也正是因为不需要经过网络协议栈，所以也不需要打包拆包、计算校验和、维护序号和应答等，只是将应用层数据从一个进程拷贝到另一个进程，这是因为，IPC 机制本质上是可靠的通讯，而网络协议是为不可靠的通讯设计的，效率比`TCP/UDP` 套接字都要高许多。类似的 `IPC机制` 还有 `UNIX管道`、`共享内存` 和 `RPC调用` 等。
+
+与 `Internet Domain Socket`类似，其接口是一致的，可以支持 `字节流(SOCK_STREAM)`和 `数据报(SOCK_DGRAM)` 两种协议。不过，本地套接字不需要 `IP` 和 `Port`，而是通过一个文件名对应的文件来表示。
+
+我们通过一个小 demo 来观察一下：
+
+首先，服务端我用 `golang` 来实现：
+
+```go
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"os"
+	"time"
+)
+
+/*
+* @CreateTime: 2021/3/23 14:56
+* @Author: hujiaming
+* @Description:
+ */
+
+func main() {
+    // 建议这里设置成绝对路径 
+	socketFileName := "/tmp/unix_domain.sock1"
+	var unixAddr *net.UnixAddr
+	unixAddr, _ = net.ResolveUnixAddr("unix", socketFileName)
+again:
+	lis, err := net.ListenUnix("unix", unixAddr)
+	if err != nil {
+		log.Print("listen to Unix Domain Socket error: ", err, "retrying...")
+		// 此处可能是 socket 文件已经存在，尝试移除后重新连接
+		err = os.Remove(socketFileName)
+		if err != nil {
+			log.Panic("retry to connect failed")
+		}
+		goto again
+	}
+	defer lis.Close()
+
+	for {
+		conn, err := lis.AcceptUnix()
+		if err != nil {
+			log.Print("accept error", err)
+			continue
+		}
+		log.Println("A client connected : " + conn.RemoteAddr().String())
+		go process1(conn)
+	}
+}
+
+func process1(conn *net.UnixConn) {
+	ipStr := conn.RemoteAddr().String()
+	defer func() {
+		fmt.Println("disconnected :" + ipStr)
+		conn.Close()
+	}()
+	reader := bufio.NewReader(conn)
+
+	for {
+		message, err := reader.ReadString('\n')  // 通过 `\n` 作为消息的分隔符
+		if err != nil {
+			log.Print("readString error ", err)
+			return
+		}
+
+		fmt.Println(string(message))
+		msg := time.Now().String() + "\n"
+		b := []byte(msg)
+		conn.Write(b)
+	}
+}
+```
+
+为了体现跨进程通信，客户端我用 python 实现：
+
+```python
+
+import socket
+
+socket_file = "/tmp/unix_domain.sock1"
+
+def run():
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(socket_file)
+    while True:
+        data = input("请输入您需要发送的数据:")
+        if data == "quit":
+            break
+        data = data + "\n"  # \n 是给 go 服务端读的
+        sock.send(data.encode("utf-8"))
+        receive = sock.recv(1024)  # 多读一些数据，不影响的
+        print("py : ", receive.decode("utf-8"))
+    sock.close()
+
+
+if __name__ == '__main__':
+    run()
+
+```
+
+当然，golang 的客户端也很简单：
+
+```go
+
+import (
+	"bufio"
+	"fmt"
+	"log"
+	"net"
+	"os"
+)
+
+/*
+* @CreateTime: 2021/3/23 15:05
+* @Author: hujiaming
+* @Description:
+ */
+
+func main() {
+	file := "/Users/hujiaming/go/src/hujm.net/tcpip_demo/unixsocket/unix_domain.sock1"
+	conn, err := net.Dial("unix", file) // 发起请求
+	if err != nil {
+		log.Fatal(err) // 如果发生错误，直接退出程序，因为请求失败所以不需要 close
+	}
+	defer conn.Close() 
+
+	input := bufio.NewScanner(os.Stdin) // 创建 一个读取输入的处理器
+	reader := bufio.NewReader(conn)     // 创建 一个读取网络的处理器
+	for {
+		fmt.Print("请输入需要发送的数据: ")       // 打印提示
+		input.Scan()                    // 读取终端输入
+		data := input.Text()            // 提取输入内容
+		conn.Write([]byte(data + "\n")) // 将输入的内容发送出去，需要将 string 转 byte 加 \n  作为读取的分割符
+
+		msg, err := reader.ReadString('\n') // 读取对端的数据
+		if err != nil {
+			log.Println("readString ", err)
+		}
+		fmt.Println(msg) // 打印接收的消息
+	}
+}
+
+```
+
+### 5. 关于 TIME_WAIT
+
+在关闭一个 TCP连接 时，会经过一个 **四次握手** 的过程，在这个过程中，发起断开连接的一方会有一段时间处于 `TIME_WAIT` 状态。本节尝试说明这一现象出现的前因后果以及对应的解决方案。
+
+#### TIME_WAIT 出现的场景
+
+下图是 **四次挥手** 的流程图：
+
+![四次挥手](/Users/hujiaming/Library/Application%20Support/typora-user-images/image-20210323185014383.png)
+
+主机 1 主动发起连接终止操作，先发送 FIN 报文，自己状态变为 `FIN_WAIT_1`；主机2 收到后进入 `CLOSE_WAIT` 状态，同时回复一个 `ACK` 应答，主机1 收到应答后状态变为 `FIN_WAIT_2`；发送 FIN 代表当前端再没有数据发送了，但仍旧可以接收数据，也就是说，主机1 进入 `FIN_WAIT_2` 后，依旧可以接收来自主机2 的数据；当主机2 没有数据再发送时，向主机1 发送 FIN 报文，主机2 进入 `LAST_ACK` 状态，主机1 收到来自对端的 FIN 报文后，就进入了 `TIME_WAIT` 状态。
+
+主机1 在  `TIME_WAIT` 的停留时间是固定的，为 `MSL(Maximum Segment Lifetime，最长TCP分段生命时期)` 的两倍，一般称之为 `2MSL`。在 Linux 系统中，这个值是固定的 60s。等过了这个时间之后，主机1 就会进入 `CLOSED` 状态。需要记住的是：**只有发起终止的一方才会有 `TIME_WAIT` 状态。**
+
+>   关于 `MSL`：MSL 是任何 IP 数据报能够在因特网中存活的最长时间。其实它的实现不是靠计时器来完成的，在每个数据报里都包含有一个被称为 `TTL（time to live）` 的 8 位字段，它的最大值为 255。`TTL` 可译为 **“生存时间”**，这个生存时间由源主机设置初始值，它表示的是一个 IP数据报可以经过的最大跳跃数，每经过一个路由器，就相当于经过了一跳，它的值就减 1，当此值减为 0 时，则所在的路由器会将其丢弃，同时发送 `ICMP` 报文通知源主机。[RFC793](https://tools.ietf.org/html/rfc793) 中规定 `MSL` 的时间为 2 分钟，`Linux` 实际设置为 30 秒。
+
+#### TIME_WAIT 的作用
+
+为什么不直接进入 `CLOSED` 状态，非要停留在 `TIME_WAIT` 这个状态呢？为什么非要等两个 MSL ？有两个方面的原因。
+
+原因一，为了确保最后的 ACK 能被动方接收，从而正确关闭。设想以下场景：主机2 只有在收到 ACK 后才会进入 `CLOSED` 状态，如果预设的时间内没有收到，会重发 FIN；如果主机1 没有维护 `TIME_WAIT` 状态而直接关闭，当再次收到主机2 的 FIN 时，因为已经丢失上下文，只能回复一个 `RST` 报文，这将导致主机2 关闭时出现错误。当主机1 有 `TIME_WAIT` 状态时，就可以在再次接收到 FIN 时回复一个 ACK，使得主机2 进入正常的 `CLOSED` 状态。
+
+原因二，为了让之前连接实例的过期报文自然消失从而不影响下次连接。在复杂的网络环境中，由于某些原因，某一方突然断开了连接，或者由于 crash 造成之前的连接信息全部丢失，这种情况下，需要重新建立连接(用新的 ISN)。但另一方并不知道这一方面已经 crash 的事实，可能继续用上一次的连接去发送数据，crash 的一方收到这个上一次连接的数据之后，只能将其丢弃，并重新发起建立连接的请求(三次握手)。我们考虑这样一个场景，在原链接中断之后，又重新创建了一个原连接的 “clone”，说是“clone”是因为这个连接和原来连接的四元组完全相同(不同的是各自三次握手时的初始序列号)，如果上一个连接的“迷失报文”经过一段时间后到达另一方，要么这个“迷失报文”的序列号正好也在新建立的序列号窗口之中，被另一方接收，会对正常的数据流造成影响，要么这个“迷失报文”的序列号不在接收窗口范围之中，被丢弃(这是理想结果)。所以，TCP 就设计出了这么一个机制，经过 2MSL 这个时间，足以让两个方向上的分组都被丢弃，使得原来连接的分组在网络中都自然消失，再出现的分组一定都是新化身所产生的。
+
+划重点，`2MSL` 的时间是从 主机1 接收到 `FIN` 后发送 `ACK` 开始计时的；如果在 `TIME_WAIT` 时间内，因为 主机1 的 `ACK` 没有传输到主机2，主机 1 又接收到了主机 2 重发的 `FIN` 报文，那么 `2MSL` 时间将重新计时。道理很简单，因为 `2MSL` 的时间，目的是为了让旧连接的所有报文都能自然消亡，现在主机 1 重新发送了 `ACK` 报文，自然需要重新计时，以便防止这个 `ACK` 报文对新可能的连接化身造成干扰。
+
+总结：** `TIME_WAIT` 的引入是为了让 `TCP` 报文得以自然消失，同时为了让被动关闭方能够正常关闭。**
+
+#### TIME_WAIT 的危害
+
+主要危害是对 **端口资源** 的占用。一个 TCP 连接至少消耗一个本地端口，而本地端口是有限的(一般可开启的端口范围是 32768～61000)，如果 `TIME_WAIT` 过多，端口被耗尽，那新的连接就无法创建，整个服务对外表现为不可用，放在生产环境下妥妥的一个“事件”~
+
+#### 如何优化TIME_WAIT
+
+Linux 下，有 `net.ipv4.tcp_tw_reuse` 这个选项：
+
+```bash
+net.ipv4.tcp_tw_reuse = 1 表示开启重用。允许将TIME-WAIT sockets重新用于新的TCP连接，默认为0，表示关闭；
+```
+
+这个参数只对于发起连接的一方有用(即客户端)，并且对应的 TIME_WAIT 状态的连接创建时间超过 1 秒才可以被复用。
+
+其他方案都有一定的风险，不建议使用，这里也不罗列了。
+
+### 6. 如何正确地关闭连接
+
+在绝大数情况下，TCP 连接都是先关闭一个方向，此时另外一个方向还是可以正常进行数据传输。举个例子，客户端主动发起连接的中断，将自己到服务器端的数据流方向关闭，此时，客户端不再往服务器端写入数据，服务器端读完客户端数据后就不会再有新的报文到达。但这并不意味着，TCP 连接已经完全关闭，很有可能的是，服务器端正在对客户端的最后报文进行处理，比如去访问数据库，存入一些数据；或者是计算出某个客户端需要的值，当完成这些操作之后，服务器端把结果通过套接字写给客户端，我们说这个套接字的状态此时是“半关闭”的。最后，服务器端才有条不紊地关闭剩下的半个连接，结束这一段 TCP 连接的使命。
+
+然而，上面的场景是在理想环境下的，比较“优雅”，如果服务器端处理不好，就会导致最后的关闭过程是“粗暴”的，达不到我们上面描述的“优雅”关闭的目标，形成的后果，很可能是服务器端处理完的信息没办法正常传送给客户端，破坏了用户侧的使用场景。
+
+先看看关闭连接的方式：
+
+#### close()
+
+```c
+int close(int sockfd)
+```
+
+对 `连接套接字sockfd` 执行 `close` 操作，成功返回 0，失败返回-1。
+
+这个函数会对套接字引用计数减一，系统一旦发现套接字引用计数到 0，就会对套接字进行彻底释放，并且会关闭TCP 两个方向的数据流。
+
+什么是 **套接字引用计数**？因为套接字可以被多个进程共享，我们通过 fork 的方式产生子进程，套接字引用次数 +1；调用一次 `close` 函数，套接字引用次数 -1。这就是套接字引用计数的含义。
+
+`close()` 函数具体是如何关闭两个方向的数据流呢？在输入方向，系统内核会将该套接字设置为 **不可读**，任何读操作都会返回异常；在输出方向，系统内核尝试将发送缓冲区的数据发送给对端，并最后向对端发送一个 `FIN` 报文，接下来如果再对该套接字进行写操作会返回异常。
+
+如果对端没有检测到套接字已关闭，还继续发送报文，就会收到一个 RST 报文，告诉对端：“Hi, 我已经关闭了，别再给我发数据了。”
+
+使用 `close()` ，要注意两点：
+
+-   `close()` 函数只是把套接字引用计数减 1，未必会立即关闭连接；
+-   `close()` 函数如果在套接字引用计数达到 0 时，立即终止读和写两个方向的数据传送。
+
+我们会发现，close 函数并不能帮助我们只关闭连接的一个方向，那么如何在需要的时候关闭一个方向呢？试试 `shutdown()` 函数。
+
+#### shutdown()
+
+```c
+int shutdown(int sockfd, int howto)
+```
+
+对 `连接套接字sockfd` 执行 shutdown 操作，若成功则为 0，若出错则为 -1。
+
+`haoto` 有三个选项：
+
+-   `SHUT_RD(0)`：关闭连接的“读”这个方向，对该套接字进行读操作直接返回 `EOF`。从数据角度来看，套接字上接收缓冲区已有的数据将被丢弃，如果再有新的数据流到达，会对数据进行 `ACK`，然后悄悄地丢弃。也就是说，对端还是会接收到 `ACK`，在这种情况下根本不知道数据已经被丢弃了。
+-   `SHUT_WR(1)` ：关闭连接的“写”这个方向，这就是常被称为”半关闭“的连接。此时，不管套接字引用计数的值是多少，都会直接关闭连接的写方向。套接字上发送缓冲区已有的数据将被立即发送出去，并发送一个 FIN 报文给对端。应用程序如果对该套接字进行写操作会报错。
+-   `SHUT_RDWR(2)` ：相当于 SHUT_RD 和 SHUT_WR 操作各一次，关闭套接字的读和写两个方向。
+
+#### close() 和 shutdown() 的差别
+
+差别主要有三点：
+
+1.  `close()` 会关闭连接，并释放所有连接对应的资源，而 `shutdown()` 并不会释放掉套接字和所有的资源；
+2.  `close()` 存在引用计数的概念，并不一定导致该套接字不可用；``shutdown()`` 则不管引用计数，直接使得该套接字不可用，如果有别的进程企图使用该套接字，将会受到影响;
+3.  `close()` 的引用计数导致不一定会发出 `FIN` 结束报文，而 `shutdown()` 则总是会发出 `FIN` 结束报文，这在我们打算关闭连接通知对端的时候，是非常重要的。
+
+通过 golang 代码来体现：
+
+服务端代码：
+
+```go
+package main
+
+/*
+* @CreateTime: 2021/3/23 20:27
+* @Author: hujiaming
+* @Description:
+ */
+
+import (
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"strconv"
+	"time"
+)
+
+var (
+	close = "close"
+	how   = 0
+)
+
+func main() {
+	flag.StringVar(&close, "close", close, "close or shutdown")
+	flag.IntVar(&how, "how", how, "how shutdown")
+	flag.Parse()
+	l, err := net.Listen("tcp", ":2000")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Println("listening... ")
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			panic(err)
+		}
+		log.Println("get conn", c.RemoteAddr())
+		go handle(c, close, how)
+	}
+}
+
+func handle(c net.Conn, close string, how int) {
+	go func() {
+		b := make([]byte, 1024)
+		for {
+			_, err := c.Read(b)
+			if err != nil {
+				fmt.Println("read err", err)
+				return
+			}
+			fmt.Println("read", string(b))
+		}
+	}()
+	go func() {
+		for i := 10000; ; i++ {
+			_, err := c.Write([]byte(strconv.Itoa(i)))
+			if err != nil {
+				fmt.Println("write err", err)
+				return
+			}
+			time.Sleep(time.Second)
+			fmt.Println("write", i)
+		}
+	}()
+	// 决定关闭连接的方式
+	if close == "close" {
+		if err := c.Close(); err != nil {
+			panic(err)
+		}
+		log.Println("closed")
+	} else {
+		switch how {
+		case 0:
+			c.(*net.TCPConn).CloseRead() // syscall.Shutdown(fd, 0)
+		case 1:
+			c.(*net.TCPConn).CloseWrite() // syscall.Shutdown(fd, 1)
+		case 2:
+			c.(*net.TCPConn).Close() // syscall.Shutdown(fd, 2)
+		}
+		log.Println("shutdown, how:", how)
+	}
+}
+```
+
+### 7. 关于 Keep-Alive
+
+TCP 也有自己的保活机制—— `Keep-Alive` 。它的工作机制是这样的：定义一个时间段，在这个时间段内，如果没有任何连接相关的活动，TCP 的保活机制就会启动，每隔一定时间，就向对侧发送一个数据量非常少 **探测报文**，如果连续几个探测报文都没有得到响应，那么就认为这个 TCP 连接已经失效，内核会将错误信息上报给上层应用。
+
+相关的参数如下：
+
+```bash
+tcp_keepalive_time (integer; default: 7200; since Linux 2.2) 连接闲置 7200s 后
+tcp_keepalive_intvl (integer; default: 75; since Linux 2.4) 每间隔 75s 发送一次探测报文
+tcp_keepalive_probes (integer; default: 9; since Linux 2.2) 探测 9 次还未收到反馈就认为连接失效
+```
+
+开启了 TCP 的 `Keep-Alive` 之后，需要考虑下面三种情况：
+
+1.  对端程序正常响应。则 TCP 保活时间被重置，等待下一个保活机制触发；
+2.  对端程序崩溃。探测报文不可达，在经过 `75s * 9` 尝试之后，确认连接失效，断开连接；
+3.  对端程序崩溃后重启。探测报文到达后，对端发现并不是当前连接的有效报文，于是回复一个 `RST` 报文，本端收到后会进行对应的重连操作。
+
+TCP 的 `Keep-Alive` 选项默认关闭，而且在默认情况下，在 Linux 系统中，最少要经过 `2小时 11 分 15 秒`(上述三个时间的总和) 才能发现一条死亡连接，这似乎有点难以接受。
+
+当然，我们可以手动改这个默认值：
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import time
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+"""开启keepalive"""
+s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+"""设置每20秒发送一次心跳包"""
+s.setsockopt(socket.SOL_TCP, socket.TCP_KEEPIDLE, 20)
+"""对方没有回应心跳包后，每隔一秒发送一次心跳包"""
+s.setsockopt(socket.SOL_TCP, socket.TCP_KEEPINTVL, 1)
+s.connect(('127.0.0.1', 8888)) 
+time.sleep(200)
+```
+
+### 8. I/O 模型
+
+如果拿去书店买书举例子。
+
+阻塞 I/O 对应什么场景呢？ 你去了书店，告诉老板（内核）你想要某本书，然后你就一直在那里等着，直到书店老板翻箱倒柜找到你想要的书，有可能还要帮你联系全城其它分店。注意，这个过程中你一直滞留在书店等待老板的回复，好像在书店老板这里"阻塞"住了。
+
+那么非阻塞 I/O 呢？你去了书店，问老板有没你心仪的那本书，老板查了下电脑，告诉你没有，你就悻悻离开了。一周以后，你又来这个书店，再问这个老板，老板一查，有了，于是你买了这本书。注意，这个过程中，你没有被阻塞，而是在不断轮询。
+
+但轮询的效率太低了，于是你向老板提议：“老板，到货给我打电话吧，我再来付钱取书。”这就是前面讲到的 I/O 多路复用。
+
+再进一步，你连去书店取书也想省了，得了，让老板代劳吧，你留下地址，付了书费，让老板到货时寄给你，你直接在家里拿到就可以看了。这就是异步I/O。
+
+这几个 I/O 模型，再加上进程、线程模型，构成了整个网络编程的知识核心。
+
+>    非阻塞 I/O 可以使用在 read、write、accept、connect 等多种不同的场景，在非阻塞
+>   I/O 下，使用轮询的方式引起 CPU 占用率高，所以一般将非阻塞 I/O 和 I/O 多路复用技术
+>   select、poll 等搭配使用，在非阻塞 I/O 事件发生时，再调用对应事件的处理函数。这种方
+>   式，极大地提高了程序的健壮性和稳定性，是 Linux 下高性能网络编程的首选。
+
+>   epoll 通过改进的接口设
+>   计，避免了用户态 - 内核态频繁的数据拷贝，大大提高了系统性能。在使用 epoll 的时候，
+>   我们一定要理解条件触发和边缘触发两种模式。条件触发的意思是只要满足事件的条件，比
+>   如有数据需要读，就一直不断地把这个事件传递给用户；而边缘触发的意思是只有第一次满
+>   足条件的时候才触发，之后就不会再传递同样的事件了。
 
 ## 三、`Golang` 实现
 
+### 1. 链路层
 
+主要讲解 **以太网网卡**、**虚拟网卡** 和 `ARP` 协议。
+
+数据链路层属于计算机网络的底层，使用的信道主要有点对点信道和广播信道两种类型。 在 TCP/IP 协议族中，数据链路层主要有以下几个目的：
+
+1.  接收和发送链路层数据，提供 io 的能力。
+2.  为 IP 模块发送和接收数据
+3.  为 ARP 模块发送 ARP 请求和接收 ARP 应答
+4.  为 RARP 模块发送 RARP 请求和接收 RARP 应答
+
+TCP/IP 支持多种不同的链路层协议，这取决于网络所使用的硬件。 数据链路层的协议数据单元—**帧**：将 IP 层（网络层）的数据报添加首部和尾部封装成帧。 数据链路层协议有许多种，都会解决三个基本问题：封装成帧，透明传输，差错检测。
+
+**以太网协议**：是当今现有局域网采用的最通用的通信协议标准，故可认为以太网就是局域网。以太网实在应用太广了，以至于我们在现实生活中看到的链路层协议的数据封装都是以太网协议封装的。
+
+**链路层寻址**：通信当然得知道发送者的地址和接受者的地址，这是最基础的。以太网规定，所有连入网络的设备，都必须具有“网卡”接口。然后数据包是从一块网卡，传输到另一块网卡的。网卡的地址，就是数据包的发送地址和接收地址，叫做 `MAC` 地址，也叫物理地址，这是最底层的地址。每块网卡出厂的时候，都有一个全世界独一无二的 MAC 地址，长度是 48 个二进制位，通常用 12 个十六进制数表示。有了这个地址，我们可以定位网卡和数据包的路径了。
+
+**MTU** ：表示在链路层最大的传输单元，也就是链路层一帧数据的数据内容最大长度，单位为字节，MTU 是协议栈实现一个很重要的参数，请大家务必理解该参数。一般网卡默认 MTU 是 1500，当你往网卡写入的内容超过 1518bytes，就会报错，后面我们可以写代码试试。
 
 ## 四、参考资料
 
 -   [UNIX网络编程 卷1：套接字联网API（第3版）](https://book.douban.com/subject/4859464/)
 -    [Linux Socket编程（不限Linux）](https://www.cnblogs.com/skynet/archive/2010/12/12/1903949.html)
 -   [揭开Socket编程的面纱](https://www.cnblogs.com/goodcandle/archive/2005/12/10/socket.html)
+-   [https://github.com/ICKelin/gtun](https://github.com/ICKelin/gtun)
+-   [https://github.com/bigeagle/gohop](https://github.com/bigeagle/gohop)
+-   [https://docs.ioin.in/writeup/medium.com/__FWTO_O_gohop_vpn_E6_BA_90_E7_A0_81_E5_88_86_E6_9E_90_a131c70cf95c/index.html](https://docs.ioin.in/writeup/medium.com/__FWTO_O_gohop_vpn_E6_BA_90_E7_A0_81_E5_88_86_E6_9E_90_a131c70cf95c/index.html)
+-   
 
+## Notes
+
+ARPANET 早期使用一种网络控制协议（Network Control Protocol，NCP）来达到主机与主机之间的通信，但是它无法和个别的计算机网络做交流，因为设备之间没有一个标准协议。1972 年，ARPANET 项目组的核心成员 Vinton Cerf 和 Bob Kahn 开始合作开展所谓的网络互联相互（Interneting Project）。他们希望连接不同的网络，使得一个网络上的主机能够与另一个主机网络上进行通信，需要克服的问题很多：不同的分组大小、不同的接口类型、不同的传输速率、以及不同的可靠性要求。Cerf 和 Kahn 提出利用被称为网关的一种设备作为中间的硬件，进行一个网络到另一个网络的数据传输。
+
+之后 Cerf 和 Kahn 在 1974 年发表了里程碑式的文章 `Protocol for Packet Network Interconnection`，描述了实现端到端数据投递的协议，这是一个新版的 NCP，叫传输控制协议（TCP）。这篇文章包括了封装、数据报、网关的功能等概念，其中主要思想是把纠错功能从 IMP 移到了主机。同时该协议（TCP）被应用到 ARPANET 网络，但是此时依然没有形成一个网络标准，各种协议并存包括 NCP，TCP 等协议。
+
+在 1997 年后，TCP 被拆分成两个网络协议：传输控制协议（TCP）和因特网协议（IP），IP 处理数据包的路由选择，TCP 负责高层次的功能，如分段、重组、检错。这个新的联合体就是人们熟知的 TCP/IP。
+
+1980 年发表 UDP 协议。
+
+1981 年 UNIX 系统集成了 TCP/IP 协议栈，包含网络软件的流行操作系统对网络的普及起了很大的作用。
+
+1983 年原先的交流协议 NCP 被禁用，TCP/IP 协议变成了 ARPANET 的正式协议，同时 ARPANET 分裂成两个网络：军用网（MILNET）和非军用的 ARPANET。之后，NCP 成为历史，TCP/IP 开始成为通用协议。
+
+1984 年 ISO 发布了开放式系统互联模型（OSI）。
+
+再之后，互联网极速发展，更多的主干网被搭建，更多的主机连接进来，直至组成了世界互联的巨大网络。
+
+**链路层**：链路层也是将数据包发送到另一台主机，但是这两台主机一定是同个局域网的（不考虑广域网二层打通的情况），链路层负责将网络层交下来的 IP 数据报组装成帧，在两个相邻节点间的链路上传送帧。链路层的通信就像在一栋小楼里面互相讲话一下，小明想与小红讲话，只要在楼里喊一下，“小红你在吗？”，小红听到了就会回复说，“小明，我在啊”。小明在喊小红的时候，在这栋楼里的其他人也听得到，这种行为叫**广播**。链路层网络不适合大型网络，因为一旦主机多了，广播会比较占用资源，就像楼里大家都在喊别人一下，听起来会很乱。
+
+**一般的上网流程**：
+
+![](https://doc.shiyanlou.com/document-uid949121labid10418timestamp1555395048260.png)
+
+一般情况家里的上网流程如下，但不是一定是这样，请读者注意！
+
+-   首先你得购买互联网服务提供商（ISP，如：中国电信）提供的账号密码；
+-   启动家用路由器，假设路由器内网地址为 192.168.1.1，接着配置账号密码，通过拨号和 ISP 建立连接，ISP 会返回一个公网 IP 地址，假如 IP 为 1.1.10.1；
+-   然后再把电脑插到家用路由器的网口上，那么电脑就获取到了内网 IP 地址，假如为 192.168.1.2，这时候家用路由器就是电脑的默认网关，和家用路由器的相连的网卡假设为 en0；
+-   当在浏览器访问 `https://www.baidu.com` 时，浏览器会发起 DNS 请求得到对应的 IP，假如为 180.97.33.18，DNS 请求的详细过程我们暂时忽略；
+-   拿到 IP 后，浏览器会使用 tcp 连接系统调用和远端主机建立连接，系统调用会进入内核；
+-   内核先通过路由最长匹配查询目标 IP 下一跳地址，也就是邻居地址，比如目的 180.97.33.18 会匹配下一跳地址 192.168.1.1;
+-   内核接着查询 ARP 表，得知下一跳地址的网卡和物理 MAC 地址，如果没有查询到，则会发送广播 ARP 请求，得到 MAC 地址；
+-   到目前为止发送 tcp 报文所需的信息都有了，目标 IP 和目标 MAC 地址，此时系统会给 tcp 的连接分配一个源端口，假如为 33306；
+-   之后完成 tcp 三次握手，将 HTTP 请求报文封装在 tcp 数据段中发送给网卡 en0；
+-   家用路由器接收到电脑的数据报，经过源地址转换（SNAT），将数据报文发送给 ISP；
+-   ISP 通过路由表选择发送给下一个路由，经过多个路由转发最终达到百度的服务主机；
+-   百度服务器得到电脑发送的报文，返回 HTTP 响应，按原路返回给家用路由器；
+-   家用路由器接收到 HTTP 响应报文后，经过目标地址转换（DNAT），将数据发送给电脑；
+-   电脑上的浏览器接收到 HTTP 响应，渲染页面，呈现出网页；
+
+
+
+## 极客时间《网络编程实战》摘抄
+
+大家经常说的四层、七层，分别指的是什么？
+TCP 三次握手是什么，TIME_WAIT 是怎么发生的？CLOSE_WAIT 又是什么状态？
+Linux 下的 epoll 解决的是什么问题？如何使用 epoll 写出高性能的网络程序？
+什么是网络事件驱动模型？Reactor 模式又是什么？
+
+
+
+事实上，我认为学习高性能网络编程，掌握两个核心要点就可以了：第一就是理解网络协
+议，并在这个基础上和操作系统内核配合，感知各种网络 I/O 事件；第二就是学会使用线
+程处理并发。抓住这两个核心问题，也就抓住了高性能网络编程的“七寸”。
+
+
+
+无论是客户端的 connect，还是服务端的 accept，或者 read/write 操
+作等，socket 是我们用来建立连接，传输数据的唯一途径。
+
+socket 是加州大学伯克利分校的研究人员在 20 世纪 80 年代早期提出的，所以也被叫做伯
+克利套接字。伯克利的研究者们设想用 socket 的概念，屏蔽掉底层协议栈的差别。第一版
+实现 socket 的就是 TCP/IP 协议，最早是在 BSD 4.2 Unix 内核上实现了 socket。很快大
+家就发现这么一个概念带来了网络编程的便利，于是有更多人也接触到了 socket 的概念。
+Linux 作为 Unix 系统的一个开源实现，很早就从头开发实现了 TCP/IP 协议，伴随着
+socket 的成功，Windows 也引入了 socket 的概念。于是在今天的世界里，socket 成为
+网络互联互通的标准。
+
+
+
+之所以对 UDP 使用 connect，绑定本地地址和端口，是为了让我们的程序可以快速获取异步错误信息的通知，同时也可以获得一定性能上的提升。
+
+在所有 TCP 服务器程序中，调用 bind 之前请设置 SO_REUSEADDR 套接字选项，以便服务端程序可以在极短时间内复用同一个端口启动。
+
+
+
+ep_poll_callback 函数的作用非常重要，它将内核事件真正地和 epoll 对象联系了起来。它
+又是怎么实现的呢？
+首先，通过这个文件的 wait_queue_entry_t 对象找到对应的 epitem 对象，因为
+eppoll_entry 对象里保存了 wait_quue_entry_t，根据 wait_quue_entry_t 这个对象的地
+址就可以简单计算出 eppoll_entry 对象的地址，从而可以获得 epitem 对象的地址。这部
+分工作在 ep_item_from_wait 函数中完成。一旦获得 epitem 对象，就可以寻迹找到
+eventpoll 实例。

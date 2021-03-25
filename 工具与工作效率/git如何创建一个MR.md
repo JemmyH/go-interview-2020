@@ -18,4 +18,17 @@ https://zmcdbp.com/gitlab-merge-request-simple-use/
 
 
 
-git checkout -b newbrabch -t origin/newbranch
+git checkout -b newbrabch -t origin/newbranch  与远端保持同步
+
+
+
+**修改最近几次的提交信息：**
+
+git rebase -i HEAD~3
+
+将需要修改的某一次提交前面的 pick 改为 edit；
+
+git commit —amend 然后修改
+
+git rebase —continue
+

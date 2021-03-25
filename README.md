@@ -28,13 +28,13 @@ Golang后端找工作，学习记录
 
 
 
+**TODO:**
+
+-   [ ] [分布式锁](https://mp.weixin.qq.com/s?__biz=MzIyMzMxNjYwNw==&mid=2247483673&idx=1&sn=233c609a71fe8d0e8e3a0b5db920a7cc&chksm=e8215e09df56d71fa7be052174b9014ee71f480715b4685fcc8f1453937c36523015cb6d96d6&scene=178&cur_album_id=1511862059553095681#rd)
+-   [ ] [限流](https://mp.weixin.qq.com/s?__biz=MzIyMzMxNjYwNw==&mid=2247483695&idx=1&sn=7d5528e8a6bc2296d4871e74a0270550&chksm=e8215e3fdf56d729b8e0d9fb077cbd37216173f6ffad442a6a3d383052d4f05892538ef64645&scene=178&cur_album_id=1511862059553095681#rd)
+-   [ ] [新的网络库]https://github.com/panjf2000/gnet
+-   [ ] [https://github.com/KeKe-Li/data-structures-questions golang数据结构相关问题](https://github.com/KeKe-Li/data-structures-questions)
+-   [ ] [mongo 索引](https://zhuanlan.zhihu.com/p/77971681)
 
 
-2020.9.6 准备百度面试：
-
--   [ ] 深入了解Golang并发相关，以及一些底层的设计
-    -   [ ] 熟悉了解Golang技术原理、Golang协程管理；
-    -   [ ] 具备扎实的计算机基础，熟悉Linux/shell，掌握常用的数据结构、算法、设计模式；
--   [ ] 项目相关
--   [ ] 了解云开发、微服务
 
