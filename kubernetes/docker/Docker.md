@@ -243,13 +243,11 @@ ubuntu              latest              a2a15febcdf3        5 days ago          
 
 > 可以看到最新的ubuntu镜像只有64M，而centos也只有202M，是不是觉得太小了？这是因为docker在运行的时候直接使用了docker宿主机器的kernel。
 > Linux操作系统由内核空间和用户空间组成。
->
 
 ![@Linux操作系统|center](https://pic.downk.cc/item/5f5f3635160a154a67e0d0de.png)
 
 > 内核空间是kernel，用户空间是rootfs, 不同Linux发行版的区别主要是rootfs. 比如 Ubuntu 14.04 使用 upstart 管理服务，apt 管理软件包；而 CentOS 7 使用 systemd 和 yum。这些都是用户空间上的区别，Linux kernel 差别不大。
 > **所以 Docker 可以同时支持多种 Linux 镜像，模拟出多种操作系统环境。**
-> 　
 
 ![@Docker模拟多操作系统环境|center](https://pic.downk.cc/item/5f5f3646160a154a67e0d627.png)
 
@@ -654,3 +652,28 @@ demo_go             multi               62b316cc49bd    21.1MB
 ```
 
 看出差距了？
+
+### 4. 使用本地的 GOPATH，在 docker 中构建二进制
+
+在 docker 中构建 golang 应用时，很多时候需要非官方的本地依赖，解决方式是利用官方提供的golang镜像，将本地的代码通过挂载的方式，挂载到容器中，然后再容器中编译即可。
+
+```bash
+$ echo $GOPATH
+/Users/hujiaming/go
+
+# main 文件地址
+$ echo $PWD
+/Users/hujiaming/go/src/gitlab.momoso.com/mms2/indexing/parsecrawler
+
+# 编译，最终在宿主机输出二进制为 parsecrawler
+docker run -v "${GOPATH}":/go --rm -v "${PWD}":/go/src/gitlab.momoso.com/mms2/indexing/parsecrawler -w /go/src/gitlab.momoso.com/mms2/indexing/parsecrawler -e GO111MODULE="off" -e GOOS="linux" golang:alpine go build -v -o parsecrawler
+```
+
+- `—rm` ：会在每次执行完编译后自动删除容器（不加这个参数，使用docker ps -a会看到我们上一次执行结束的容器）
+
+- `-v "$GOPATH":/go` :将本地gopath映射到容器中，这样容器中就不会提示缺少包
+
+- `-v "$PWD":/go/src/gitlab.momoso.com/mms2/indexing/parsecrawler`: 将本地代码映射到容器中，本地代码目录为 parsecrawler
+
+- `-e GOOS | -e GO111MODULE` : 指定 Go 编译时的环境参数
+
